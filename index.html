@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Blinds</title>
+<style>
+  :root{
+    --bg:#0f1216; --card:#171b21; --line:#262c35; --text:#e8ecf1; --dim:#8b95a3;
+    --sun:#f5b544; --night:#6c8cff; --ok:#3ecf8e; --bad:#ff6b6b; --btn:#222833;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;background:var(--bg);color:var(--text);font:15px/1.4 -apple-system,system-ui,Segoe UI,Roboto,sans-serif;
+       padding:env(safe-area-inset-top) 14px calc(24px + env(safe-area-inset-bottom))}
+  h1{font-size:20px;margin:14px 0 4px;display:flex;align-items:center;gap:8px}
+  h2{font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:var(--dim);margin:0 0 10px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:14px;margin:12px 0}
+  .row{display:flex;gap:8px;align-items:center}
+  .row>*{flex:1}
+  button{font:inherit;color:var(--text);background:var(--btn);border:1px solid var(--line);border-radius:12px;padding:14px 10px;
+         touch-action:manipulation;user-select:none;-webkit-user-select:none}
+  button:active{filter:brightness(1.35)}
+  button.primary{background:#2b4a8a;border-color:#3a5fae}
+  button.sun{background:#5a4214;border-color:#8a6420}
+  button.night{background:#1f2b55;border-color:#33468a}
+  button.stop{background:#5a1f24;border-color:#8a2f37}
+  button:disabled{opacity:.4}
+  .dot{width:10px;height:10px;border-radius:50%;background:var(--bad);display:inline-block}
+  .dot.on{background:var(--ok)}
+  .big{font-size:42px;font-weight:700;text-align:center;margin:4px 0}
+  .dim{color:var(--dim);font-size:13px}
+  .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;text-align:center}
+  .stats b{display:block;font-size:18px}
+  input[type=range]{width:100%;accent-color:var(--sun);height:32px}
+  select,input[type=number],input[type=time],input[type=text]{font:inherit;color:var(--text);background:#0f1318;border:1px solid var(--line);
+         border-radius:10px;padding:9px;width:100%}
+  .days{display:flex;gap:5px;margin:8px 0}
+  .days span{flex:1;text-align:center;padding:8px 0;border-radius:9px;background:#0f1318;border:1px solid var(--line);font-size:13px}
+  .days span.on{background:#2b4a8a;border-color:#3a5fae}
+  .slot{border-top:1px solid var(--line);padding-top:12px;margin-top:12px}
+  .slot:first-of-type{border-top:0;margin-top:0;padding-top:0}
+  .switch{flex:0 0 auto;display:flex;align-items:center;gap:6px;font-size:13px;color:var(--dim)}
+  .switch input{width:22px;height:22px;accent-color:var(--ok)}
+  details summary{cursor:pointer;list-style:none;font-weight:600}
+  details summary::after{content:" ▸";color:var(--dim)}
+  details[open] summary::after{content:" ▾"}
+  ol{padding-left:20px;margin:8px 0}
+  ol li{margin:6px 0}
+  #log{background:#0a0c0f;border-radius:10px;padding:8px;height:170px;overflow:auto;font:12px/1.35 ui-monospace,Menlo,Consolas,monospace;white-space:pre-wrap}
+  .tx{color:#7fb0ff}.rx{color:#9be3b8}.er{color:var(--bad)}
+  svg{display:block;margin:0 auto}
+  .warn{background:#3a2a10;border:1px solid #6b4a14;border-radius:12px;padding:10px;font-size:13px;display:none}
+</style>
+</head>
+<body>
+
+<h1><span class="dot" id="dot"></span> Blinds</h1>
+<div class="dim" id="connText">Not connected</div>
+
+<div class="warn" id="noBle">This browser can't use Bluetooth. On iPhone, open this page in the free <b>Bluefy</b> app. On Android/PC, use Chrome or Edge.</div>
+
+<div class="card">
+  <button class="primary" id="btnConnect" style="width:100%">Connect to blinds</button>
+</div>
+
+<!-- ============ POSITION ============ -->
+<div class="card">
+  <h2>Position</h2>
+  <svg id="blindPic" width="180" height="120" viewBox="0 0 180 120" aria-hidden="true"></svg>
+  <div class="big"><span id="pct">--</span>%</div>
+  <div class="dim" style="text-align:center;margin-bottom:10px" id="stateText">—</div>
+  <div class="row" style="margin-bottom:10px">
+    <button class="night" data-cmd="C">Close</button>
+    <button class="stop"  data-cmd="S">Stop</button>
+    <button class="sun"   data-cmd="O">Open</button>
+  </div>
+  <input type="range" id="slider" min="0" max="100" step="5" value="50">
+  <div class="row dim"><span>closed</span><span style="text-align:center" id="sliderVal">50%</span><span style="text-align:right">open</span></div>
+  <button id="btnGo" style="width:100%;margin-top:8px">Go to <span id="goVal">50</span>%</button>
+</div>
+
+<!-- ============ TODAY ============ -->
+<div class="card">
+  <h2>Today</h2>
+  <div class="stats">
+    <div><span class="dim">Board clock</span><b id="clock">--:--</b></div>
+    <div><span class="dim">Sunrise</span><b id="rise" style="color:var(--sun)">--:--</b></div>
+    <div><span class="dim">Sunset</span><b id="set" style="color:var(--night)">--:--</b></div>
+  </div>
+  <div class="dim" style="text-align:center;margin-top:10px" id="nextText">Next: —</div>
+</div>
+
+<!-- ============ PRESETS ============ -->
+<div class="card">
+  <h2>Schedule presets</h2>
+  <div id="slots"></div>
+</div>
+
+<!-- ============ CALIBRATE ============ -->
+<div class="card">
+  <details>
+    <summary>Calibrate (do this once after mounting)</summary>
+    <ol class="dim">
+      <li><b>Press and hold</b> "Turn toward closed" until the slats are fully closed. Let go.</li>
+      <li>Tap <b>This is CLOSED</b>.</li>
+      <li><b>Hold</b> "Turn toward open" until the slats are where you want "open". Let go.</li>
+      <li>Tap <b>This is OPEN</b>. The board saves how long that took.</li>
+    </ol>
+    <div class="row" style="margin:10px 0">
+      <button class="night" id="holdMinus">◀ Turn toward closed</button>
+      <button class="sun"   id="holdPlus">Turn toward open ▶</button>
+    </div>
+    <div class="row">
+      <button data-cmd="Z">This is CLOSED</button>
+      <button data-cmd="M">This is OPEN</button>
+    </div>
+    <div class="dim" style="margin-top:8px">Measured travel: <b id="travel">--</b> ms</div>
+  </details>
+</div>
+
+<!-- ============ MOTOR TUNING ============ -->
+<div class="card">
+  <details>
+    <summary>Motor tuning</summary>
+    <p class="dim">Cruise = steady speed (lower = slower, but weaker). Kick = short full-power burst to break the rod loose.</p>
+    <label class="dim">Cruise power <b id="crV">150</b></label>
+    <input type="range" id="cruise" min="40" max="255" value="150">
+    <label class="dim">Kick power <b id="kpV">255</b></label>
+    <input type="range" id="kick" min="0" max="255" value="255">
+    <label class="dim">Kick length <b id="kmV">150</b> ms</label>
+    <input type="range" id="kickMs" min="0" max="800" step="10" value="150">
+    <button id="btnTune" style="width:100%;margin-top:8px">Save tuning to board</button>
+  </details>
+</div>
+
+<!-- ============ TROUBLESHOOT ============ -->
+<div class="card">
+  <details>
+    <summary>Troubleshooting log</summary>
+    <div id="log"></div>
+    <div class="row" style="margin-top:8px">
+      <input type="text" id="raw" placeholder="raw command, e.g. ?" autocapitalize="characters" autocomplete="off">
+      <button id="btnRaw" style="flex:0 0 80px">Send</button>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <button id="btnSync">Re-sync clock</button>
+      <button id="btnAll">Scan all BLE devices</button>
+    </div>
+  </details>
+</div>
+
+<script>
+/* ===================================================================
+   Blinds phone app  — talks to Blinds_Controller.ino through the HM-10
+   HM-10 = one "serial" characteristic: service FFE0, characteristic FFE1
+   Messages are plain text lines ending in \n (same as Serial Monitor)
+   =================================================================== */
+const SERVICE = 0xFFE0, CHAR = 0xFFE1;
+const DAY = ['S','M','T','W','T','F','S'];
+const DAYFULL = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+
+let dev = null, ch = null, rxBuf = '', txQueue = Promise.resolve(), pollTimer = null;
+const st = { pct:null, state:'', min:-1, dow:9, rise:-1, set:-1, slots:[], travel:null };
+const $ = id => document.getElementById(id);
+
+/* ---------- log ---------- */
+function log(text, cls){
+  const el = $('log'), line = document.createElement('div');
+  line.className = cls || ''; line.textContent = text;
+  el.appendChild(line);
+  while (el.childNodes.length > 200) el.removeChild(el.firstChild);
+  el.scrollTop = el.scrollHeight;
+}
+
+/* ---------- connect ---------- */
+async function connect(scanAll){
+  if (!navigator.bluetooth){ $('noBle').style.display='block'; return; }
+  try{
+    const opts = scanAll
+      ? { acceptAllDevices:true, optionalServices:[SERVICE] }
+      : { filters:[{services:[SERVICE]},{namePrefix:'HM'},{namePrefix:'BT05'},{namePrefix:'MLT'},{namePrefix:'Blinds'}],
+          optionalServices:[SERVICE] };
+    dev = await navigator.bluetooth.requestDevice(opts);
+    dev.addEventListener('gattserverdisconnected', onDisconnect);
+    await openLink();
+  }catch(e){ log('connect: '+e.message,'er'); setConn(false); }
+}
+
+async function openLink(){
+  $('connText').textContent = 'Connecting to ' + (dev.name || 'device') + '…';
+  const server = await dev.gatt.connect();
+  const svc = await server.getPrimaryService(SERVICE);
+  ch = await svc.getCharacteristic(CHAR);
+  await ch.startNotifications();
+  ch.addEventListener('characteristicvaluechanged', onData);
+  setConn(true);
+  log('connected: ' + (dev.name || '?'));
+  await syncClock();       // board has no real-time clock: phone gives it the time
+  await send('?');
+  clearInterval(pollTimer);
+  pollTimer = setInterval(() => { if (!document.hidden) send('?'); }, 15000);
+}
+
+function onDisconnect(){
+  setConn(false); ch = null; clearInterval(pollTimer);
+  log('disconnected — retrying in 2 s','er');
+  setTimeout(async () => { if (dev && !ch) try{ await openLink(); }catch(e){ log('retry failed: '+e.message,'er'); } }, 2000);
+}
+
+function setConn(on){
+  $('dot').classList.toggle('on', on);
+  $('connText').textContent = on ? 'Connected to ' + (dev && dev.name || 'blinds') : 'Not connected';
+  $('btnConnect').textContent = on ? 'Connected ✓' : 'Connect to blinds';
+}
+
+/* ---------- send (HM-10 takes 20 bytes per packet) ---------- */
+function send(cmd){
+  txQueue = txQueue.then(async () => {
+    if (!ch){ log('not connected: '+cmd,'er'); return; }
+    if (cmd[0] !== 'H') log('> ' + cmd, 'tx');
+    const bytes = new TextEncoder().encode(cmd + '\n');
+    for (let i = 0; i < bytes.length; i += 20){
+      const part = bytes.slice(i, i + 20);
+      if (ch.writeValueWithoutResponse) await ch.writeValueWithoutResponse(part);
+      else await ch.writeValue(part);
+    }
+  }).catch(e => log('send: '+e.message,'er'));
+  return txQueue;
+}
+
+function syncClock(){
+  const epoch = Math.floor(Date.now() / 1000);
+  const offset = -new Date().getTimezoneOffset();   // EST = -300, EDT = -240
+  return send('T' + epoch + ',' + offset);
+}
+
+/* ---------- receive ---------- */
+function onData(ev){
+  rxBuf += new TextDecoder().decode(ev.target.value);
+  let i;
+  while ((i = rxBuf.indexOf('\n')) >= 0){
+    const line = rxBuf.slice(0, i).replace('\r','').trim();
+    rxBuf = rxBuf.slice(i + 1);
+    if (line) handleLine(line);
+  }
+}
+
+const hm = s => { if (!s || s[0] === '-') return -1; const [h,m] = s.split(':').map(Number); return h*60+m; };
+const fmt = m => { if (m < 0) return '--:--'; m=((m%1440)+1440)%1440; let h=Math.floor(m/60), mm=m%60, ap=h<12?'am':'pm'; h=h%12||12; return h+':'+String(mm).padStart(2,'0')+' '+ap; };
+
+function handleLine(line){
+  if (line[0] !== 'S' || line.indexOf('MOVING') < 0) log(line, line.startsWith('ERR') ? 'er' : 'rx');
+  const f = line.split(',');
+  switch (line[0]){
+    case 'S': st.pct=+f[1]; st.state=f[2]; st.min=hm(f[3]); st.dow=+f[4]; break;
+    case 'U': st.rise=hm(f[1]); st.set=hm(f[2]); break;
+    case 'L': st.slots[+f[0].slice(1)] = {en:+f[1], type:f[2], value:+f[3], pct:+f[4], days:+f[5]}; renderSlots(); break;
+    case 'K': $('cruise').value=f[1]; $('kick').value=f[2]; $('kickMs').value=f[3]; st.travel=+f[4]; updateTuneLabels(); break;
+    case 'D': log('clock drift since last sync: '+f[1]+' s over '+f[2]+' h'); break;
+    case 'E': log('preset '+(+f[1]+1)+' ran'); break;
+  }
+  render();
+}
+
+/* ---------- draw ---------- */
+function drawBlind(pct){
+  // open = slats edge-on (thin, light gets through); closed = slats overlap (solid)
+  const svg = $('blindPic'); const p = (pct ?? 50) / 100;
+  let s = '<rect x="10" y="4" width="160" height="6" rx="3" fill="#39414d"/>';
+  s += `<rect x="12" y="12" width="156" height="104" rx="4" fill="#f5b544" opacity="${0.12 + 0.5*p}"/>`;
+  const h = 2 + (1 - p) * 10;                      // slat looks thicker as it closes
+  for (let k = 0; k < 9; k++){
+    const y = 14 + k * 11.5;
+    s += `<rect x="12" y="${y + (11.5 - h)/2}" width="156" height="${h}" rx="1.5" fill="#cfd6df"/>`;
+  }
+  s += `<line x1="160" y1="10" x2="160" y2="118" stroke="#8b95a3" stroke-width="3" stroke-linecap="round"/>`;
+  svg.innerHTML = s;
+}
+
+function render(){
+  $('pct').textContent = st.pct ?? '--';
+  $('stateText').textContent = st.state === 'MOVING' ? 'Moving…' : st.state === 'HOLD' ? 'Turning (held)…' : st.state ? 'Stopped' : '—';
+  $('clock').textContent = fmt(st.min) + (st.dow < 7 ? ' ' + DAYFULL[st.dow] : '');
+  $('rise').textContent = fmt(st.rise);
+  $('set').textContent = fmt(st.set);
+  $('travel').textContent = st.travel ?? '--';
+  drawBlind(st.pct);
+  $('nextText').textContent = 'Next: ' + nextEvent();
+}
+
+function trigger(s){
+  if (s.type === 'F') return s.value;
+  const base = s.type === 'R' ? st.rise : st.set;
+  return base < 0 ? -1 : ((base + s.value) % 1440 + 1440) % 1440;
+}
+
+function nextEvent(){
+  if (st.min < 0 || st.dow > 6) return 'board clock not set';
+  let best = null;
+  st.slots.forEach((s, i) => {
+    if (!s || !s.en) return;
+    const t = trigger(s); if (t < 0) return;
+    for (let d = 0; d < 8; d++){
+      const dow = (st.dow + d) % 7;
+      if (!(s.days & (1 << dow))) continue;
+      if (d === 0 && t <= st.min) continue;
+      const away = d * 1440 + t - st.min;
+      if (!best || away < best.away) best = { away, t, i, s, d };
+      break;
+    }
+  });
+  if (!best) return 'nothing scheduled';
+  const when = best.d === 0 ? 'today' : best.d === 1 ? 'tomorrow' : DAYFULL[(st.dow + best.d) % 7];
+  return `${best.s.pct === 0 ? 'close' : best.s.pct === 100 ? 'open' : 'move to ' + best.s.pct + '%'} ${when} at ${fmt(best.t)}`;
+}
+
+/* ---------- presets ---------- */
+function renderSlots(){
+  const box = $('slots'); box.innerHTML = '';
+  for (let i = 0; i < 4; i++){
+    const s = st.slots[i] || {en:0,type:'F',value:420,pct:100,days:127};
+    const div = document.createElement('div'); div.className = 'slot';
+    const isF = s.type === 'F';
+    const hhmm = isF ? String(Math.floor(s.value/60)).padStart(2,'0') + ':' + String(s.value%60).padStart(2,'0') : '07:00';
+    div.innerHTML = `
+      <div class="row" style="margin-bottom:8px">
+        <b style="flex:0 0 auto">Preset ${i+1}</b>
+        <label class="switch"><input type="checkbox" class="en" ${s.en?'checked':''}> on</label>
+      </div>
+      <div class="row">
+        <select class="type">
+          <option value="F" ${isF?'selected':''}>Time</option>
+          <option value="R" ${s.type==='R'?'selected':''}>Sunrise ±</option>
+          <option value="N" ${s.type==='N'?'selected':''}>Sunset ±</option>
+        </select>
+        <input type="time" class="time" value="${hhmm}" style="display:${isF?'block':'none'}">
+        <input type="number" class="off" value="${isF?0:s.value}" step="5" min="-240" max="240" placeholder="± min" style="display:${isF?'none':'block'}">
+        <select class="pct">
+          ${[0,25,50,75,100].map(p=>`<option value="${p}" ${s.pct===p?'selected':''}>${p===0?'Close':p===100?'Open':p+'%'}</option>`).join('')}
+        </select>
+      </div>
+      <div class="dim offnote" style="display:${isF?'none':'block'};margin-top:4px">minutes after (+) or before (−)</div>
+      <div class="days">${DAY.map((d,k)=>`<span data-k="${k}" class="${s.days&(1<<k)?'on':''}">${d}</span>`).join('')}</div>
+      <button class="save" style="width:100%">Save preset ${i+1}</button>`;
+    const type = div.querySelector('.type');
+    type.onchange = () => {
+      const f = type.value === 'F';
+      div.querySelector('.time').style.display = f ? 'block' : 'none';
+      div.querySelector('.off').style.display = f ? 'none' : 'block';
+      div.querySelector('.offnote').style.display = f ? 'none' : 'block';
+    };
+    div.querySelectorAll('.days span').forEach(sp => sp.onclick = () => sp.classList.toggle('on'));
+    div.querySelector('.save').onclick = () => {
+      const t = type.value;
+      let value;
+      if (t === 'F'){ const [h,m] = div.querySelector('.time').value.split(':').map(Number); value = h*60+m; }
+      else value = Math.round(+div.querySelector('.off').value || 0);
+      let days = 0; div.querySelectorAll('.days span').forEach(sp => { if (sp.classList.contains('on')) days |= 1 << +sp.dataset.k; });
+      const en = div.querySelector('.en').checked ? 1 : 0;
+      send(`A${i},${en},${t},${value},${div.querySelector('.pct').value},${days}`);
+    };
+    box.appendChild(div);
+  }
+}
+
+/* ---------- hold-to-move: repeat H+ / H- every 250 ms while pressed ---------- */
+function holdButton(btn, cmd){
+  let timer = null;
+  const start = e => { e.preventDefault(); if (timer) return; send(cmd); timer = setInterval(() => send(cmd), 250); };
+  const stop  = () => { if (!timer) return; clearInterval(timer); timer = null; send('S'); };
+  btn.addEventListener('pointerdown', start);
+  ['pointerup','pointercancel','pointerleave'].forEach(ev => btn.addEventListener(ev, stop));
+  btn.addEventListener('contextmenu', e => e.preventDefault());
+}
+
+/* ---------- wire up ---------- */
+function updateTuneLabels(){ $('crV').textContent=$('cruise').value; $('kpV').textContent=$('kick').value; $('kmV').textContent=$('kickMs').value; }
+['cruise','kick','kickMs'].forEach(id => $(id).oninput = updateTuneLabels);
+$('btnTune').onclick = () => send(`K${$('cruise').value},${$('kick').value},${$('kickMs').value}`);
+$('btnConnect').onclick = () => connect(false);
+$('btnAll').onclick = () => connect(true);
+$('btnSync').onclick = syncClock;
+$('btnRaw').onclick = () => { const v = $('raw').value.trim(); if (v) send(v); $('raw').value=''; };
+$('slider').oninput = () => { $('sliderVal').textContent = $('slider').value + '%'; $('goVal').textContent = $('slider').value; };
+$('btnGo').onclick = () => send('P' + $('slider').value);
+document.querySelectorAll('[data-cmd]').forEach(b => b.onclick = () => send(b.dataset.cmd));
+holdButton($('holdPlus'), 'H+');
+holdButton($('holdMinus'), 'H-');
+if (!navigator.bluetooth) $('noBle').style.display = 'block';
+renderSlots(); render();
+</script>
+</body>
+</html>
