@@ -20,7 +20,20 @@
   .row>*{flex:1}
   button{font:inherit;color:var(--text);background:var(--btn);border:1px solid var(--line);border-radius:12px;padding:14px 10px;
          touch-action:manipulation;user-select:none;-webkit-user-select:none}
-  button:active{filter:brightness(1.35)}
+  /* 3D press: a darker "base" under each button that collapses when pressed */
+  button{box-shadow:0 5px 0 rgba(0,0,0,.55);transform:translateY(0);
+         transition:transform 70ms ease, box-shadow 70ms ease, filter 70ms ease}
+  button.pressed, button:active{transform:translateY(4px) scale(.97);box-shadow:0 1px 0 rgba(0,0,0,.55);
+         filter:brightness(1.45)}
+  button.flash{animation:flash .45s ease-out}
+  @keyframes flash{0%{outline:3px solid #fff;outline-offset:0}100%{outline:3px solid transparent;outline-offset:6px}}
+  .days span{transition:transform 70ms, background 120ms}
+  .days span.pressed{transform:scale(.88)}
+  #toast{position:fixed;left:50%;bottom:calc(18px + env(safe-area-inset-bottom));transform:translate(-50%,30px);
+         background:#2a3240;color:#fff;border:1px solid #3d4757;border-radius:999px;padding:10px 18px;font-size:15px;
+         opacity:0;pointer-events:none;transition:opacity .2s, transform .2s;z-index:9;white-space:nowrap;box-shadow:0 6px 20px rgba(0,0,0,.5)}
+  #toast.show{opacity:1;transform:translate(-50%,0)}
+  #toast.ok{border-color:var(--ok)} #toast.bad{border-color:var(--bad);background:#3a1d20}
   button.primary{background:#2b4a8a;border-color:#3a5fae}
   button.sun{background:#5a4214;border-color:#8a6420}
   button.night{background:#1f2b55;border-color:#33468a}
@@ -28,6 +41,7 @@
   button:disabled{opacity:.4}
   .dot{width:10px;height:10px;border-radius:50%;background:var(--bad);display:inline-block}
   .dot.on{background:var(--ok)}
+  .dot.retry{background:var(--sun)}
   .big{font-size:42px;font-weight:700;text-align:center;margin:4px 0}
   .dim{color:var(--dim);font-size:13px}
   .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;text-align:center}
@@ -58,6 +72,7 @@
 <h1><span class="dot" id="dot"></span> Blinds</h1>
 <div class="dim" id="connText">Not connected</div>
 
+<div id="toast"></div>
 <div class="warn" id="noBle">This browser can't use Bluetooth. On iPhone, open this page in the free <b>Bluefy</b> app. On Android/PC, use Chrome or Edge.</div>
 
 <div class="card">
@@ -124,6 +139,7 @@
   <details>
     <summary>Motor tuning</summary>
     <p class="dim">Cruise = steady speed (lower = slower, but weaker). Kick = short full-power burst to break the rod loose.</p>
+    <p class="dim" style="color:var(--sun)">⚠ Open/close distances are measured in motor run-time. After you change and save tuning, <b>redo Calibrate</b> so they match the new speed. Tune first, calibrate last.</p>
     <label class="dim">Cruise power <b id="crV">150</b></label>
     <input type="range" id="cruise" min="40" max="255" value="150">
     <label class="dim">Kick power <b id="kpV">255</b></label>
@@ -166,6 +182,33 @@ const st = { pct:null, state:'', min:-1, dow:9, rise:-1, set:-1, slots:[], trave
 const $ = id => document.getElementById(id);
 
 /* ---------- log ---------- */
+/* ---------- feedback: toast message + pressed look ---------- */
+let toastTimer = null, lastPresetSave = 0;
+function toast(msg, kind){
+  const t = $('toast'); t.textContent = msg; t.className = 'show ' + (kind || '');
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.className = '', 1800);
+}
+// iPhone browsers ignore :active unless a touch listener exists, so add the
+// pressed class ourselves on every button / day chip
+document.addEventListener('touchstart', () => {}, {passive:true});
+function pressOn(e){ const b = e.target.closest('button, .days span'); if (b) b.classList.add('pressed'); }
+function pressOff(){ document.querySelectorAll('.pressed').forEach(b => b.classList.remove('pressed')); }
+document.addEventListener('pointerdown', pressOn);
+['pointerup','pointercancel','pointerleave','scroll'].forEach(ev => document.addEventListener(ev, pressOff, true));
+document.addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  b.classList.remove('flash'); void b.offsetWidth; b.classList.add('flash');   // restart ring animation
+});
+
+const SAY = { O:'Opening…', C:'Closing…', S:'Stopped', Z:'Saved: this is CLOSED', M:'Saved: this is OPEN', X:'Reset to defaults' };
+function describe(cmd){
+  if (SAY[cmd]) return SAY[cmd];
+  if (cmd[0] === 'P') return 'Moving to ' + cmd.slice(1) + '%…';
+  if (cmd[0] === 'A') return 'Saving preset ' + (+cmd[1] + 1) + '…';
+  if (cmd[0] === 'K') return 'Saving tuning…';
+  return null;   // H, ?, T and raw commands: no popup
+}
+
 function log(text, cls){
   const el = $('log'), line = document.createElement('div');
   line.className = cls || ''; line.textContent = text;
@@ -242,22 +285,44 @@ async function openLink(){
   pollTimer = setInterval(() => { if (!document.hidden) send('?'); }, 15000);
 }
 
-function onDisconnect(){
-  setConn(false); ch = null; clearInterval(pollTimer);
-  log('disconnected — retrying in 2 s','er');
-  setTimeout(async () => { if (dev && !ch) try{ await openLink(); }catch(e){ log('retry failed: '+e.message,'er'); } }, 2000);
+let drops = 0, reconnecting = false;
+async function onDisconnect(){
+  ch = null; clearInterval(pollTimer);
+  drops++;
+  // note what the motor was doing: drops only while it moves = power dip
+  log(`link dropped #${drops} at ${new Date().toLocaleTimeString()} (motor was ${st.state || '?'})`, 'er');
+  if (reconnecting) return;
+  reconnecting = true;
+  setConn('retry');
+  toast('Bluetooth dropped — reconnecting…', 'bad');
+  for (const wait of [500, 1000, 2000, 3000, 5000, 5000]){
+    await new Promise(r => setTimeout(r, wait));
+    if (ch) break;
+    try{ await openLink(); toast('Reconnected ✓', 'ok'); break; }
+    catch(e){ log('retry failed: ' + errText(e), 'er'); }
+  }
+  reconnecting = false;
+  if (!ch) setConn(false);
 }
 
 function setConn(on){
-  $('dot').classList.toggle('on', on);
-  $('connText').textContent = on ? 'Connected to ' + (dev && dev.name || 'blinds') : 'Not connected';
-  $('btnConnect').textContent = on ? 'Connected ✓' : 'Connect to blinds';
+  $('dot').classList.toggle('on', on === true);
+  $('dot').classList.toggle('retry', on === 'retry');
+  $('connText').textContent = on === true ? 'Connected to ' + (dev && dev.name || 'blinds') + (drops ? `  (drops this session: ${drops})` : '')
+                            : on === 'retry' ? 'Reconnecting…' : 'Not connected';
+  $('btnConnect').textContent = on === true ? 'Connected ✓' : on === 'retry' ? 'Reconnecting…' : 'Connect to blinds';
 }
 
 /* ---------- send (HM-10 takes 20 bytes per packet) ---------- */
 function send(cmd){
   txQueue = txQueue.then(async () => {
-    if (!ch){ log('not connected: '+cmd,'er'); return; }
+    if (!ch){
+      log('not connected: '+cmd,'er');
+      if (cmd[0] !== 'H') toast('Not connected — tap Connect first', 'bad');
+      return;
+    }
+    const msg = describe(cmd); if (msg) toast(msg);
+    if (cmd[0] === 'A') lastPresetSave = Date.now();
     if (cmd[0] !== 'H') log('> ' + cmd, 'tx');
     const bytes = new TextEncoder().encode(cmd + '\n');
     for (let i = 0; i < bytes.length; i += 20){
@@ -292,11 +357,21 @@ const fmt = m => { if (m < 0) return '--:--'; m=((m%1440)+1440)%1440; let h=Math
 function handleLine(line){
   if (line[0] !== 'S' || line.indexOf('MOVING') < 0) log(line, line.startsWith('ERR') ? 'er' : 'rx');
   const f = line.split(',');
+  if (line.startsWith('ERR')) toast('Blinds said: ' + line.slice(4), 'bad');
+  else if (line[0] === 'L' && Date.now() - lastPresetSave < 3000) toast('Preset ' + (+line[1] + 1) + ' saved ✓', 'ok');
+  else if (line[0] === 'E') toast('Preset ' + (+line.split(',')[1] + 1) + ' just ran', 'ok');
+  else if (line[0] === 'S' && line.includes('IDLE') && st.state && st.state !== 'IDLE')
+    toast('Done — blinds at ' + line.split(',')[1] + '% ✓', 'ok');
   switch (line[0]){
     case 'S': st.pct=+f[1]; st.state=f[2]; st.min=hm(f[3]); st.dow=+f[4]; break;
     case 'U': st.rise=hm(f[1]); st.set=hm(f[2]); break;
     case 'L': st.slots[+f[0].slice(1)] = {en:+f[1], type:f[2], value:+f[3], pct:+f[4], days:+f[5]}; renderSlots(); break;
-    case 'K': $('cruise').value=f[1]; $('kick').value=f[2]; $('kickMs').value=f[3]; st.travel=+f[4]; updateTuneLabels(); break;
+    case 'K':
+      if (!tuneDirty){ $('cruise').value=f[1]; $('kick').value=f[2]; $('kickMs').value=f[3]; updateTuneLabels(); }
+      if (st.travel !== null && +f[4] !== st.travel) toast('Calibration saved ✓ (' + f[4] + ' ms)', 'ok');
+      else if (Date.now() - lastTuneSave < 3000) toast('Tuning saved ✓ — now redo Calibrate', 'ok');
+      st.travel=+f[4];
+      break;
     case 'D': log('clock drift since last sync: '+f[1]+' s over '+f[2]+' h'); break;
     case 'E': log('preset '+(+f[1]+1)+' ran'); break;
   }
@@ -356,11 +431,22 @@ function nextEvent(){
 }
 
 /* ---------- presets ---------- */
+// A preset you're editing is "dirty" until you tap Save. The 15-second
+// status refresh used to redraw every preset and wipe half-finished edits;
+// now dirty presets are left alone.
+const dirtySlot = [false, false, false, false];
+function markDirty(i, div){
+  dirtySlot[i] = true;
+  const b = div.querySelector('.save');
+  b.textContent = 'Save preset ' + (i+1) + '  • unsaved'; b.classList.add('primary');
+}
 function renderSlots(){
-  const box = $('slots'); box.innerHTML = '';
+  const box = $('slots');
   for (let i = 0; i < 4; i++){
+    if (dirtySlot[i]) continue;
     const s = st.slots[i] || {en:0,type:'F',value:420,pct:100,days:127};
-    const div = document.createElement('div'); div.className = 'slot';
+    let div = $('slot' + i);
+    if (!div){ div = document.createElement('div'); div.id = 'slot' + i; div.className = 'slot'; box.appendChild(div); }
     const isF = s.type === 'F';
     const hhmm = isF ? String(Math.floor(s.value/60)).padStart(2,'0') + ':' + String(s.value%60).padStart(2,'0') : '07:00';
     div.innerHTML = `
@@ -390,7 +476,8 @@ function renderSlots(){
       div.querySelector('.off').style.display = f ? 'none' : 'block';
       div.querySelector('.offnote').style.display = f ? 'none' : 'block';
     };
-    div.querySelectorAll('.days span').forEach(sp => sp.onclick = () => sp.classList.toggle('on'));
+    div.querySelectorAll('.days span').forEach(sp => sp.onclick = () => { sp.classList.toggle('on'); markDirty(i, div); });
+    div.querySelectorAll('input, select').forEach(el => { el.addEventListener('input', () => markDirty(i, div)); el.addEventListener('change', () => markDirty(i, div)); });
     div.querySelector('.save').onclick = () => {
       const t = type.value;
       let value;
@@ -398,9 +485,9 @@ function renderSlots(){
       else value = Math.round(+div.querySelector('.off').value || 0);
       let days = 0; div.querySelectorAll('.days span').forEach(sp => { if (sp.classList.contains('on')) days |= 1 << +sp.dataset.k; });
       const en = div.querySelector('.en').checked ? 1 : 0;
+      dirtySlot[i] = false;              // the board's reply (L line) redraws it
       send(`A${i},${en},${t},${value},${div.querySelector('.pct').value},${days}`);
     };
-    box.appendChild(div);
   }
 }
 
@@ -416,8 +503,16 @@ function holdButton(btn, cmd){
 
 /* ---------- wire up ---------- */
 function updateTuneLabels(){ $('crV').textContent=$('cruise').value; $('kpV').textContent=$('kick').value; $('kmV').textContent=$('kickMs').value; }
-['cruise','kick','kickMs'].forEach(id => $(id).oninput = updateTuneLabels);
-$('btnTune').onclick = () => send(`K${$('cruise').value},${$('kick').value},${$('kickMs').value}`);
+let tuneDirty = false, lastTuneSave = 0;
+['cruise','kick','kickMs'].forEach(id => $(id).oninput = () => {
+  updateTuneLabels(); tuneDirty = true;
+  $('btnTune').textContent = 'Save tuning to board  • unsaved'; $('btnTune').classList.add('primary');
+});
+$('btnTune').onclick = () => {
+  tuneDirty = false; lastTuneSave = Date.now();
+  $('btnTune').textContent = 'Save tuning to board'; $('btnTune').classList.remove('primary');
+  send(`K${$('cruise').value},${$('kick').value},${$('kickMs').value}`);
+};
 $('btnConnect').onclick = () => connect(false);
 $('btnAll').onclick = () => connect(true);
 $('btnSync').onclick = syncClock;
