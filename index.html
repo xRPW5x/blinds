@@ -174,8 +174,18 @@ function log(text, cls){
 }
 
 /* ---------- connect ---------- */
+function showProblem(msg){
+  // put problems on screen, not just in the hidden log
+  const w = $('noBle'); w.innerHTML = msg; w.style.display = 'block';
+  w.scrollIntoView({behavior:'smooth', block:'center'});
+}
+
 async function connect(scanAll){
-  if (!navigator.bluetooth){ $('noBle').style.display='block'; return; }
+  if (!navigator.bluetooth){
+    showProblem('This browser can\'t use Bluetooth. On iPhone, Safari and Chrome are blocked by Apple — open this page in the free <b>Bluefy</b> app instead.');
+    return;
+  }
+  $('noBle').style.display = 'none';
   try{
     const opts = scanAll
       ? { acceptAllDevices:true, optionalServices:[SERVICE] }
@@ -184,7 +194,17 @@ async function connect(scanAll){
     dev = await navigator.bluetooth.requestDevice(opts);
     dev.addEventListener('gattserverdisconnected', onDisconnect);
     await openLink();
-  }catch(e){ log('connect: '+e.message,'er'); setConn(false); }
+  }catch(e){
+    log('connect: '+e.message,'er'); setConn(false);
+    const m = (e.message || '') + ' ' + (e.name || '');
+    if (/cancel/i.test(m)) return;   // you closed the picker: not a problem
+    if (/permission|denied|NotAllowed|SecurityError/i.test(m))
+      showProblem('Bluetooth permission is blocked. iPhone: <b>Settings → Privacy &amp; Security → Bluetooth → Bluefy → ON</b>, then reload this page.');
+    else if (/unavailable|adapter|not available|NotFound/i.test(m))
+      showProblem('Couldn\'t find the blinds. Is the phone\'s Bluetooth on, is the Arduino powered, and is your <b>computer disconnected</b>? The HM-10 only talks to one device at a time.<br><small>' + e.message + '</small>');
+    else
+      showProblem('Connect failed: ' + e.message);
+  }
 }
 
 async function openLink(){
