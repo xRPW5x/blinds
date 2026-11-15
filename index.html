@@ -156,7 +156,8 @@
    HM-10 = one "serial" characteristic: service FFE0, characteristic FFE1
    Messages are plain text lines ending in \n (same as Serial Monitor)
    =================================================================== */
-const SERVICE = 0xFFE0, CHAR = 0xFFE1;
+const SERVICE = '0000ffe0-0000-1000-8000-00805f9b34fb', CHAR = '0000ffe1-0000-1000-8000-00805f9b34fb';
+const SERVICE_UUID = SERVICE;
 const DAY = ['S','M','T','W','T','F','S'];
 const DAYFULL = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 
@@ -180,30 +181,49 @@ function showProblem(msg){
   w.scrollIntoView({behavior:'smooth', block:'center'});
 }
 
+// Some browsers (Bluefy) reject with a plain string, not an Error object
+function errText(e){
+  if (!e) return 'unknown error';
+  if (typeof e === 'string') return e;
+  return [e.name, e.message].filter(Boolean).join(': ') || JSON.stringify(e) || String(e);
+}
+
+async function pickDevice(scanAll){
+  const svc = SERVICE_UUID;
+  if (scanAll) return navigator.bluetooth.requestDevice({ acceptAllDevices:true, optionalServices:[svc] });
+  try{
+    return await navigator.bluetooth.requestDevice({ filters:[{services:[svc]}], optionalServices:[svc] });
+  }catch(e){
+    if (/cancel/i.test(errText(e))) throw e;          // you closed the picker
+    log('filtered scan failed (' + errText(e) + ') — showing all devices instead', 'er');
+    return navigator.bluetooth.requestDevice({ acceptAllDevices:true, optionalServices:[svc] });
+  }
+}
+
 async function connect(scanAll){
   if (!navigator.bluetooth){
     showProblem('This browser can\'t use Bluetooth. On iPhone, Safari and Chrome are blocked by Apple — open this page in the free <b>Bluefy</b> app instead.');
     return;
   }
   $('noBle').style.display = 'none';
+  let stage = 'opening the device list';
   try{
-    const opts = scanAll
-      ? { acceptAllDevices:true, optionalServices:[SERVICE] }
-      : { filters:[{services:[SERVICE]},{namePrefix:'HM'},{namePrefix:'BT05'},{namePrefix:'MLT'},{namePrefix:'Blinds'}],
-          optionalServices:[SERVICE] };
-    dev = await navigator.bluetooth.requestDevice(opts);
+    dev = await pickDevice(scanAll);
     dev.addEventListener('gattserverdisconnected', onDisconnect);
+    stage = 'connecting to ' + (dev.name || 'the device');
     await openLink();
   }catch(e){
-    log('connect: '+e.message,'er'); setConn(false);
-    const m = (e.message || '') + ' ' + (e.name || '');
+    const m = errText(e);
+    log('connect (' + stage + '): ' + m, 'er'); setConn(false);
     if (/cancel/i.test(m)) return;   // you closed the picker: not a problem
     if (/permission|denied|NotAllowed|SecurityError/i.test(m))
       showProblem('Bluetooth permission is blocked. iPhone: <b>Settings → Privacy &amp; Security → Bluetooth → Bluefy → ON</b>, then reload this page.');
+    else if (/service|characteristic/i.test(m))
+      showProblem('Connected, but that device isn\'t the blinds\' HM-10 (no FFE0 service). Tap Connect again and pick the HM-10 (HMSoft / BT05 / MLT-BT05).<br><small>' + m + '</small>');
     else if (/unavailable|adapter|not available|NotFound/i.test(m))
-      showProblem('Couldn\'t find the blinds. Is the phone\'s Bluetooth on, is the Arduino powered, and is your <b>computer disconnected</b>? The HM-10 only talks to one device at a time.<br><small>' + e.message + '</small>');
+      showProblem('Couldn\'t find the blinds. Is the phone\'s Bluetooth on, is the Arduino powered, and is your <b>computer disconnected</b>? The HM-10 only talks to one device at a time.<br><small>' + m + '</small>');
     else
-      showProblem('Connect failed: ' + e.message);
+      showProblem('Connect failed while ' + stage + ':<br><small>' + m + '</small><br>Screenshot this and send it to Claude.');
   }
 }
 
