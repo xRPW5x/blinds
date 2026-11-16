@@ -50,8 +50,11 @@
   select,input[type=number],input[type=time],input[type=text]{font:inherit;color:var(--text);background:#0f1318;border:1px solid var(--line);
          border-radius:10px;padding:9px;width:100%}
   .days{display:flex;gap:5px;margin:8px 0}
-  .days span{flex:1;text-align:center;padding:8px 0;border-radius:9px;background:#0f1318;border:1px solid var(--line);font-size:13px}
-  .days span.on{background:#2b4a8a;border-color:#3a5fae}
+  .days span{flex:1;text-align:center;padding:8px 0;border-radius:9px;background:#0f1318;border:1px dashed #3a414c;font-size:13px;
+             color:#5d6673;text-decoration:line-through}
+  .days span.on{background:#2f6fd6;border:1px solid #6b9cf0;color:#fff;font-weight:700;text-decoration:none}
+  .days span.on::after{content:' ✓';font-size:11px}
+  .warnline{color:var(--bad);font-weight:600}
   .slot{border-top:1px solid var(--line);padding-top:12px;margin-top:12px}
   .slot:first-of-type{border-top:0;margin-top:0;padding-top:0}
   .switch{flex:0 0 auto;display:flex;align-items:center;gap:6px;font-size:13px;color:var(--dim)}
@@ -126,6 +129,11 @@
       <button class="night" id="holdMinus">◀ Turn toward closed</button>
       <button class="sun"   id="holdPlus">Turn toward open ▶</button>
     </div>
+    <div class="row" style="margin-bottom:10px">
+      <button class="night" data-cmd="J-">◀ nudge</button>
+      <button class="sun"   data-cmd="J+">nudge ▶</button>
+    </div>
+    <p class="dim" style="margin:0 0 10px">Nudge = one small step per tap. Use it for the last bit; it can't get cut off by a Bluetooth drop. You can hold, nudge and stop as many times as you like before tapping a "This is…" button. The distance adds up.</p>
     <div class="row">
       <button data-cmd="Z">This is CLOSED</button>
       <button data-cmd="M">This is OPEN</button>
@@ -183,7 +191,7 @@ const $ = id => document.getElementById(id);
 
 /* ---------- log ---------- */
 /* ---------- feedback: toast message + pressed look ---------- */
-let toastTimer = null, lastPresetSave = 0;
+let toastTimer = null, lastPresetSave = 0, lastAutoSync = 0;
 function toast(msg, kind){
   const t = $('toast'); t.textContent = msg; t.className = 'show ' + (kind || '');
   clearTimeout(toastTimer); toastTimer = setTimeout(() => t.className = '', 1800);
@@ -363,7 +371,17 @@ function handleLine(line){
   else if (line[0] === 'S' && line.includes('IDLE') && st.state && st.state !== 'IDLE')
     toast('Done — blinds at ' + line.split(',')[1] + '% ✓', 'ok');
   switch (line[0]){
-    case 'S': st.pct=+f[1]; st.state=f[2]; st.min=hm(f[3]); st.dow=+f[4]; break;
+    case 'S':
+      st.pct=+f[1]; st.state=f[2]; st.min=hm(f[3]); st.dow=+f[4];
+      if (st.dow > 6 && ch && Date.now() - lastAutoSync > 10000){
+        // the board has no time: it restarted since the last sync (power blip,
+        // re-plug, upload, or a motor start dipping the power). Presets were paused.
+        lastAutoSync = Date.now();
+        log('board clock was NOT set (board restarted) — re-syncing', 'er');
+        toast('Board had restarted and lost its clock — fixed ✓', 'bad');
+        syncClock(); send('?');
+      }
+      break;
     case 'U': st.rise=hm(f[1]); st.set=hm(f[2]); break;
     case 'L': st.slots[+f[0].slice(1)] = {en:+f[1], type:f[2], value:+f[3], pct:+f[4], days:+f[5]}; renderSlots(); break;
     case 'K':
@@ -411,7 +429,7 @@ function trigger(s){
 }
 
 function nextEvent(){
-  if (st.min < 0 || st.dow > 6) return 'board clock not set';
+  if (st.min < 0 || st.dow > 6) return 'board clock NOT set: presets are paused until the app connects';
   let best = null;
   st.slots.forEach((s, i) => {
     if (!s || !s.en) return;
@@ -468,6 +486,7 @@ function renderSlots(){
       </div>
       <div class="dim offnote" style="display:${isF?'none':'block'};margin-top:4px">minutes after (+) or before (−)</div>
       <div class="days">${DAY.map((d,k)=>`<span data-k="${k}" class="${s.days&(1<<k)?'on':''}">${d}</span>`).join('')}</div>
+      <div class="dim" style="margin:-2px 0 8px;font-size:12px">Bright blue ✓ = runs that day · faded/crossed out = skipped. Tap to change.</div>
       <button class="save" style="width:100%">Save preset ${i+1}</button>`;
     const type = div.querySelector('.type');
     type.onchange = () => {
